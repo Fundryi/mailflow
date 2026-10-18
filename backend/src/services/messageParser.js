@@ -214,7 +214,7 @@ export function buildSnippetFromHtml(html) {
 
 // Walk bodyStructure to find the best text part for a snippet.
 // Prefers text/plain; falls back to text/html.
-function findSnippetPart(structure) {
+export function findSnippetPart(structure) {
   if (!structure) return null;
   const type = (structure.type || '').toLowerCase();
 
