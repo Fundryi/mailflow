@@ -11,8 +11,6 @@ Everything below the line `<!-- upstream:CLAUDE.md -->` is upstream's CLAUDE.md,
 - **Instruction files.** `CLAUDE.md` is the stub (`@AGENTS.md` plus a comment); `.gitattributes` gives it `merge=ours`, so a merge keeps the stub and drops upstream's CLAUDE.md edits on the floor. Those edits are ported by hand: apply upstream's diff to the section below the marker, nowhere else. The fork rules above the marker never change because upstream changed something. `node scripts/upstream.mjs --check` fails while the section differs from the merged upstream CLAUDE.md. If upstream drops CLAUDE.md or adds its own AGENTS.md, stop and redesign this layout by hand.
 - **Nothing builds on GitHub.** Actions are disabled on the fork (a repo setting; `--check` asserts it). The workflow files stay exactly as upstream ships them so merges do not conflict; they never run here. Images are built on this PC with `scripts/publish-local.sh <version>` after `scripts/release.sh` and pushed to ghcr.io/fundryi; when upstream changes publish.yml, re-diff that script against it. Never enable Actions, never add a workflow.
 - **CI does not run here, so run it yourself** before every push: `cd backend && npm test && npm run lint && npm run lint:plugins`, then `cd frontend && npm test && npm run lint && npm run build`.
-- **Commit author** `19733372+Fundryi@users.noreply.github.com`; no private data in commits (real names, local paths, tokens, mail). Never force-push, never rewrite pushed history.
-- **ASCII only** in text we write: no em dashes, no curly quotes. Upstream's text keeps its own style.
 
 ## Upstream check
 
@@ -21,7 +19,9 @@ Everything below the line `<!-- upstream:CLAUDE.md -->` is upstream's CLAUDE.md,
 ## Where things are
 
 - `docs/UPSTREAM.md`: the merge log and the post-merge checklist. `scripts/upstream.mjs`: the check. `scripts/publish-local.sh`: local image build and push.
-- Machine-specific notes (paths, where the install runs, logins) live in `CLAUDE.local.md`, not committed.
+- Owner-only rules and machine notes (paths, where the install runs, logins, writing style) are imported from the gitignored `CLAUDE.local.md`:
+
+@CLAUDE.local.md
 
 ---
 
