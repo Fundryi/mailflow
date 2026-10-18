@@ -29,7 +29,8 @@ cd "$src"
 tags() {
   local image="ghcr.io/fundryi/$1"
   t=(-t "$image:$version" --label "org.opencontainers.image.source=https://github.com/Fundryi/mailflow")
-  if [[ "$version" != *-* || "$version" == *-fork.* ]]; then t+=(-t "$image:${version%%-*}" -t "$image:latest"); fi
+  local release="${version%%-*}"
+  if [[ "$version" != *-* || "$version" == *-fork.* ]]; then t+=(-t "$image:${release%.*}" -t "$image:latest"); fi
 }
 
 tags mailflow-backend
