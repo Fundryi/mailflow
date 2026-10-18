@@ -11,8 +11,16 @@ Routine: `git fetch --no-tags upstream`, `git merge upstream/main` (never a reba
 - New files under `backend/migrations/`: read them before the next deploy. They run against live mail data and do not roll back.
 - `package-lock.json` changed on both sides: take upstream's and run `npm install` in that folder.
 - `cd backend && npm test && npm run lint && npm run lint:plugins`, then `cd frontend && npm test && npm run lint && npm run build`.
-- Our own changes still hook in. (List them here as they appear.)
+- Our own changes still hook in:
+  - `routes/mail.js` deleteMessage: the non-UIDPLUS branch deletes the row and resyncs Trash (011394c). Upstream's test in `mail.delete.test.js` was extended, so a merge that touches that test needs a look.
+  - `imapManager.js` `_fetchSnippetBatch` + the indexer's `parts` state; `messageParser.js` exports `findSnippetPart` (7f9d0a4).
 
 ## fork-start, 2026-10-18
 
 - Base: upstream f042cd2. No merge yet; main is upstream/main plus the fork files: AGENTS.md, the CLAUDE.md stub, .gitattributes, the .gitignore block, scripts/upstream.mjs, scripts/publish-local.sh, this log.
+
+## Fork releases
+
+Version is `<merged upstream version>-fork.<n>`: `git tag v4.0.1-fork.1 && git push origin v4.0.1-fork.1`, then `scripts/publish-local.sh 4.0.1-fork.1`. No package.json bump (the image gets APP_VERSION from the tag), so upstream's own version bumps merge without conflict.
+
+- v4.0.1-fork.1 (2026-10-18): upstream f042cd2 plus the two hydroxide fixes above.

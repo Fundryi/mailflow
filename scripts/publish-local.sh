@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builds both MailFlow images on this PC and pushes them to GHCR, what .github/workflows/publish.yml
 # does on a runner (Actions are disabled on the fork; a runner takes ages). Keep it in step with publish.yml.
-# Usage: scripts/publish-local.sh <version> [platforms]   e.g. 3.6.0 or 3.6.0-beta.1; default linux/amd64
+# Usage: scripts/publish-local.sh <version> [platforms]   e.g. 4.0.1-fork.1 or 4.0.2-beta.1; default linux/amd64
+# Fork releases are <upstream version>-fork.<n>; they are releases here and move latest.
 # (publish.yml builds linux/amd64,linux/arm64; that needs a docker-container buildx builder here).
 # The tag v<version> must exist (scripts/release.sh makes it). Log in first:
 #   gh auth token | docker login ghcr.io -u Fundryi --password-stdin
@@ -22,13 +23,13 @@ trap 'rm -rf "$src"' EXIT
 git -c core.autocrlf=false archive "v$version" | tar -x -C "$src"
 cd "$src"
 
-# Same tags as publish.yml: version, major.minor and latest, except that a prerelease (3.6.0-beta.1)
-# gets only its own tag: everyone on the stock compose file pulls latest. The source label links the
+# Same tags as publish.yml: version, major.minor and latest, except that a prerelease (4.0.2-beta.1)
+# gets only its own tag: everyone on the stock compose file pulls latest. A -fork.<n> suffix is a release. The source label links the
 # GHCR package to the repo (publish.yml gets it from metadata-action).
 tags() {
   local image="ghcr.io/fundryi/$1"
   t=(-t "$image:$version" --label "org.opencontainers.image.source=https://github.com/Fundryi/mailflow")
-  [[ "$version" == *-* ]] || t+=(-t "$image:${version%.*}" -t "$image:latest")
+  if [[ "$version" != *-* || "$version" == *-fork.* ]]; then t+=(-t "$image:${version%%-*}" -t "$image:latest"); fi
 }
 
 tags mailflow-backend
