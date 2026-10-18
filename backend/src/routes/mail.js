@@ -2435,11 +2435,13 @@ async function deleteMessage(req, res, id) {
           [message.account_id, newUid, trashPath, id]);
         await query('UPDATE messages SET folder = $1, uid = $2, id = gen_random_uuid() WHERE id = $3', [trashPath, newUid, id]);
       } else {
-        // Non-UIDPLUS: DB holds the stale source UID at the destination. Guard it so
-        // reconcileDeletes does not treat it as an orphan before the next sync corrects it.
-        imapManager._guardMoveUid(message.account_id, trashPath, message.uid);
-        await query('UPDATE messages SET folder = $1, id = gen_random_uuid() WHERE id = $2', [trashPath, id]);
-        setTimeout(() => imapManager._unguardMoveUid(message.account_id, trashPath, message.uid), 10_000);
+        // Non-UIDPLUS: the server named no destination UID, and every folder has its own UID
+        // space, so filing the row under its source UID collides with whatever Trash already
+        // holds at that UID. Drop the row and pull Trash, as the bulk-delete route does; the
+        // message reappears there with its real UID.
+        await query('DELETE FROM messages WHERE id = $1', [id]);
+        imapManager.syncFolderOnDemand(account, trashPath)
+          .catch(err => console.warn('post-trash destination sync failed:', err.message));
       }
     } finally {
       imapManager._unguardMoveUid(message.account_id, message.folder, message.uid);
