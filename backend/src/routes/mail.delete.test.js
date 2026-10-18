@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+// The app under test mounts the routes without index.js, so a thrown query would hang the request
+// instead of answering 500 the way the real app does.
+import 'express-async-errors';
 
 vi.mock('../services/db.js', () => ({ query: vi.fn() }));
 vi.mock('../middleware/auth.js', () => ({
@@ -8,7 +11,7 @@ vi.mock('../middleware/auth.js', () => ({
 vi.mock('../index.js', () => ({
   imapManager: {
     _guardMoveUid: vi.fn(), _unguardMoveUid: vi.fn(), moveMessage: vi.fn(),
-    permanentDeleteMessage: vi.fn(), broadcast: vi.fn(), scheduleCountRefresh: vi.fn(),
+    permanentDeleteMessage: vi.fn(), broadcast: vi.fn(), scheduleCountRefresh: vi.fn(), syncFolderOnDemand: vi.fn(),
   },
 }));
 
@@ -19,6 +22,7 @@ import { imapManager } from '../index.js';
 
 const ACCOUNT_ID = 'a1a1a1a1-1111-4111-8111-a1a1a1a1a1a1';
 const MSG_ID = 'b2b2b2b2-2222-4222-8222-b2b2b2b2b2b2';
+const OLD_TRASH_ID = 'c3c3c3c3-3333-4333-8333-c3c3c3c3c3c3';
 
 // `rows` is the messages table by id and `server` is what the IMAP server holds per folder
 // (uid -> mail). The fakes mutate both, so a second request sees what the first one left behind.
@@ -104,6 +108,12 @@ function fakeQuery(rawSql, params = []) {
       const [col, value] = assignment.split('=').map(s => s.trim());
       next[col] = /^(DEFAULT|gen_random_uuid\(\))$/.test(value) ? randomUUID() : params[Number(value.slice(1)) - 1];
     }
+    // messages has UNIQUE (account_id, uid, folder); Postgres refuses the update with 23505.
+    for (const [id, r] of rows) {
+      if (id !== row.id && r.account_id === next.account_id && r.uid === next.uid && r.folder === next.folder) {
+        return Promise.reject(Object.assign(new Error('duplicate key value violates unique constraint "messages_account_id_uid_folder_key"'), { code: '23505' }));
+      }
+    }
     rows.delete(row.id);
     rows.set(next.id, next);
     return result([], 1);
@@ -122,6 +132,7 @@ function wireImap() {
     return uidplus ? newUid : null;
   });
   imapManager.permanentDeleteMessage.mockImplementation(async (_account, uid, folder) => { server[folder].delete(uid); });
+  imapManager.syncFolderOnDemand.mockResolvedValue(undefined);
 }
 
 const trashRow = () => [...rows.values()].find(r => r.folder === 'Trash');
@@ -136,6 +147,7 @@ describe('DELETE /api/mail/messages/:id', () => {
     const app = express();
     app.use(express.json());
     app.use('/api/mail', mailRoutes);
+    app.use((err, _req, res, next) => { void next; res.status(500).json({ error: err.message }); });
     await new Promise(r => { srv = app.listen(0, r); });
     base = `http://127.0.0.1:${srv.address().port}`;
   });
@@ -166,14 +178,21 @@ describe('DELETE /api/mail/messages/:id', () => {
     expect(rows.size).toBe(0);
   });
 
-  it('without UIDPLUS, a repeated DELETE does not expunge whatever holds the stale uid in Trash', async () => {
+  it('without UIDPLUS, the trashed row is dropped and Trash resynced rather than filed under a uid Trash already holds', async () => {
+    // Every folder has its own UID space, so Trash can already hold uid 42: on the server and in the cache.
     reset({ trash: { 42: 'MAIL-OLD' }, withUidplus: false });
+    rows.set(OLD_TRASH_ID, { id: OLD_TRASH_ID, account_id: ACCOUNT_ID, uid: 42, folder: 'Trash', is_read: true, message_id: '<old@example.com>' });
     expect(await del()).toBe(200);
-    expect(trashRow()).toMatchObject({ uid: 42 }); // stale until the next Trash sync
-    expect(await del()).toBe(404);
-    expect(imapManager.permanentDeleteMessage).not.toHaveBeenCalled();
+    // The server moved MAIL-A; the cache no longer claims to know where it is, and Trash is pulled to find out.
+    expect([...rows.values()]).toEqual([expect.objectContaining({ id: OLD_TRASH_ID, uid: 42, folder: 'Trash' })]);
+    expect(imapManager.syncFolderOnDemand.mock.calls.map(c => c.slice(1))).toEqual([['Trash']]);
     expect(server.Trash.get(42)).toBe('MAIL-OLD');
     expect(server.Trash.get(900)).toBe('MAIL-A');
+    expect(countDeltas('INBOX')).toEqual([-1]);
+    expect(countDeltas('Trash')).toEqual([1]);
+
+    expect(await del()).toBe(404);
+    expect(imapManager.permanentDeleteMessage).not.toHaveBeenCalled();
   });
 
   it('refuses a second DELETE of the same message while the first is in flight', async () => {
