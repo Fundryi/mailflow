@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('imapflow', () => ({ ImapFlow: vi.fn() }));
 vi.mock('./db.js', () => ({ query: vi.fn() }));
-vi.mock('./messageParser.js', () => ({ parseMessage: vi.fn(), parseMailboxList: vi.fn(() => [{ name: 'Hidden', email: 'hidden@example.test' }]), buildSnippetFromHtml: vi.fn(), snippetFromBody: vi.fn(), decodeMimeWords: vi.fn(), detectBulkFromParsedHeaders: vi.fn(), parseRawHeaders: vi.fn(), enrichParsedMetadata: vi.fn((parsed) => parsed) }));
+vi.mock('./messageParser.js', () => ({ parseMessage: vi.fn(), findSnippetPart: vi.fn(), parseMailboxList: vi.fn(() => [{ name: 'Hidden', email: 'hidden@example.test' }]), buildSnippetFromHtml: vi.fn(), snippetFromBody: vi.fn(), decodeMimeWords: vi.fn(), detectBulkFromParsedHeaders: vi.fn(), parseRawHeaders: vi.fn(), enrichParsedMetadata: vi.fn((parsed) => parsed) }));
 vi.mock('../routes/oauth.js', () => ({ refreshMicrosoftToken: vi.fn(), refreshGoogleToken: vi.fn() }));
 vi.mock('./emailSanitizer.js', () => ({ sanitizeEmail: vi.fn() }));
 vi.mock('./encryption.js', () => ({ decrypt: vi.fn() }));
@@ -22,7 +22,7 @@ import { query } from './db.js';
 import { resolveForConnection } from './hostValidation.js';
 import { getConnectionPolicy } from './connectionPolicy.js';
 import { invalidateGtdConfigCache } from '../plugins/gtd/gtdConfig.js';
-import { parseMessage } from './messageParser.js';
+import { parseMessage, findSnippetPart } from './messageParser.js';
 import { classifyAndTagMessage } from './spamPipeline.js';
 import { getAccountAddresses } from './mailAccess.js';
 
@@ -3587,6 +3587,73 @@ describe('backfill — a reconnect that cannot succeed', () => {
     expect(mgr.refreshBulkFlags).toHaveBeenCalledWith(acct);
     expect(mgr.startSnippetIndexer).toHaveBeenCalledWith(acct);
   });
+});
+
+describe('snippet indexer batch on a server that rejects nested body sections', () => {
+  // hydroxide (Proton bridge) addresses only top-level parts: BODY[1.1] fails the whole FETCH
+  // with a tagged NO, and one failing message aborts the batch.
+  const STRUCTURE = { type: 'multipart/mixed', childNodes: [{ part: '1', type: 'text/html', encoding: '7bit' }, { part: '2', type: 'application/pdf', disposition: 'attachment' }] };
+  const UIDS = [11, 12, 13];
+  let mgr, fetches;
+  function arrange({ sectionError = { responseStatus: 'NO', responseText: 'invalid body section path length' } } = {}) {
+    mgr = new ImapManager({ clients: new Set() });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    findSnippetPart.mockImplementation((structure) => structure?.childNodes?.[0] ?? null);
+    fetches = [];
+    return {
+      fetch: vi.fn(async function* (range, q) {
+        fetches.push(q.bodyParts ?? null);
+        if (q.bodyParts?.some(p => p.includes('.'))) throw Object.assign(new Error('Command failed'), sectionError);
+        for (const uid of range.split(',').map(Number)) {
+          yield {
+            uid,
+            ...(q.bodyStructure ? { bodyStructure: STRUCTURE, envelope: { subject: `m${uid}` } } : {}),
+            ...(q.bodyParts ? { bodyParts: new Map(q.bodyParts.map(p => [p, Buffer.from(`<p>body ${uid} part ${p}</p>`)])) } : {}),
+          };
+        }
+      }),
+    };
+  }
+  afterEach(() => { vi.restoreAllMocks(); findSnippetPart.mockReset(); });
+
+  it('falls back to structure first, then one fetch per part the parser would pick, and stays there for the run', async () => {
+    const client = arrange();
+    const state = { speculative: true };
+
+    const batch = [];
+    for await (const msg of mgr._fetchSnippetBatch(client, UIDS, state)) batch.push(msg);
+
+    expect(batch.map(m => m.uid)).toEqual(UIDS);
+    for (const msg of batch) expect(msg.bodyParts.get('1').toString()).toBe(`<p>body ${msg.uid} part 1</p>`);
+    expect(state.speculative).toBe(false);
+    // the blind attempt, a structure-only pass, then exactly one part fetch for the three messages
+    expect(fetches).toEqual([expect.arrayContaining(['1.1']), null, ['1']]);
+
+    fetches.length = 0;
+    for await (const _ of mgr._fetchSnippetBatch(client, [21, 22], state)) void _;
+    expect(fetches).toEqual([null, ['1']]); // no second blind attempt this run
+  });
+
+  it('fetches the HTML sibling with the text part, as the speculative fetch would have', async () => {
+    const client = arrange();
+    findSnippetPart.mockImplementation(() => ({ part: '1', type: 'text/plain', htmlFallback: { part: '2', type: 'text/html' } }));
+    const state = { speculative: false };
+    for await (const _ of mgr._fetchSnippetBatch(client, [31], state)) void _;
+    expect(fetches).toEqual([null, ['1', '2']]);
+  });
+
+  it.each([
+    ['a transport failure', { code: 'ECONNRESET' }],
+    ['a connection-limit refusal', { responseStatus: 'NO', responseText: 'LOGIN Rate limit hit.', serverResponseCode: 'LIMIT' }],
+  ])('leaves %s to the caller and keeps the speculative path', async (_name, sectionError) => {
+    const client = arrange({ sectionError });
+    const state = { speculative: true };
+    const run = async () => { for await (const _ of mgr._fetchSnippetBatch(client, UIDS, state)) void _; };
+    await expect(run()).rejects.toThrow('Command failed');
+    expect(state.speculative).toBe(true);
+    expect(fetches).toHaveLength(1);
+  });
+
 });
 
 // ── Body prefetch circuit breaker (#474 follow-up) ───────────────────────────

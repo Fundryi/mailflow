@@ -3,7 +3,7 @@ import { extractImapError } from './imapError.js';
 import { recordUnfetchable, suppressedUids, clearUnfetchable, hasRealGap } from './unfetchableUids.js';
 import { ImapFlow } from 'imapflow';
 import { query } from './db.js';
-import { parseMessage, parseMailboxList, snippetFromBody, detectBulkFromParsedHeaders, ALIAS_FORWARDER_HEADERS, parseHeadersInput, headersToRawString, decodeMimeWords, enrichParsedMetadata, renderCalendarInvite } from './messageParser.js';
+import { parseMessage, parseMailboxList, snippetFromBody, findSnippetPart, detectBulkFromParsedHeaders, ALIAS_FORWARDER_HEADERS, parseHeadersInput, headersToRawString, decodeMimeWords, enrichParsedMetadata, renderCalendarInvite } from './messageParser.js';
 import { headerIds, searchReplyDraftUids, draftFolderPaths } from './replyDraftLookup.js';
 import { classifyMessage, loadSocialDomains, getGlobalCategorizationEnabled } from './categorizer.js';
 import { pluginRegistry } from '../plugins/registry.js';
@@ -5325,6 +5325,49 @@ export class ImapManager {
   // after backfill completes, and also at connect time for existing accounts.
   // Skipped for providers that throttle body fetches too aggressively to run at scale.
   // Processes most-recent messages first so the most useful results are indexed quickly.
+  // One snippet-indexer batch. The speculative fetch asks for the common part numbers blind,
+  // and a server that cannot address one of them (hydroxide: nothing nested) fails the whole
+  // batch with a tagged NO/BAD. fetchMessageBody already falls back to structure first and then
+  // only the parts it names; the indexer does the same here, and remembers it for the rest of
+  // the run, so a capability refusal never counts toward the consecutive-error abort.
+  async *_fetchSnippetBatch(client, uids, state) {
+    const range = uids.join(',');
+    if (state.speculative) {
+      try {
+        for await (const msg of client.fetch(range, {
+          uid: true, envelope: true, bodyStructure: true, bodyParts: BODY_PREFETCH_PARTS,
+        }, { uid: true })) yield msg;
+        return;
+      } catch (err) {
+        // Only a server answer about the request counts. A dropped connection, a throttle or a
+        // connection-limit refusal (also a tagged NO on Yahoo) keeps the old path, so the caller's
+        // backoff still sees it.
+        if (!err.responseStatus || err.code === 'ETHROTTLE' || isConnectionRefusal(extractImapError(err))) throw err;
+        state.speculative = false;
+        console.log(`Snippet indexer: server rejected the speculative part fetch (${extractImapError(err)}), fetching structure first for the rest of this run`);
+      }
+    }
+    const messages = [];
+    for await (const msg of client.fetch(range, { uid: true, envelope: true, bodyStructure: true }, { uid: true })) messages.push(msg);
+    // The text part the parser will use, plus its HTML sibling when it has one, as the speculative
+    // fetch would have delivered both. One FETCH per distinct part set.
+    const byParts = new Map(); // 'part[,htmlPart]' -> (uid -> msg)
+    for (const msg of messages) {
+      const pick = findSnippetPart(msg.bodyStructure);
+      if (!pick?.part) continue;
+      const key = [pick.part, pick.htmlFallback?.part].filter(Boolean).join(',');
+      if (!byParts.has(key)) byParts.set(key, new Map());
+      byParts.get(key).set(msg.uid, msg);
+    }
+    for (const [key, byUid] of byParts) {
+      for await (const r of client.fetch([...byUid.keys()].join(','), { uid: true, bodyParts: key.split(',') }, { uid: true })) {
+        const msg = byUid.get(r.uid);
+        if (msg && r.bodyParts) msg.bodyParts = r.bodyParts;
+      }
+    }
+    yield* messages;
+  }
+
   async startSnippetIndexer(account) {
     const cfg = providerProfile(account);
     if (!cfg.snippetIndex) return;
@@ -5390,6 +5433,7 @@ export class ImapManager {
       );
 
       let consecutiveErrors = 0;
+      const parts = { speculative: true }; // flipped by _fetchSnippetBatch when the server refuses the blind part list
       for (const { folder } of foldersResult.rows) {
         let done = false;
         while (!done) {
@@ -5425,10 +5469,7 @@ export class ImapManager {
           try {
             const lock = await siClient.getMailboxLock(folder);
             try {
-              for await (const msg of siClient.fetch(uids.join(','), {
-                uid: true, envelope: true, bodyStructure: true,
-                bodyParts: BODY_PREFETCH_PARTS,
-              }, { uid: true })) {
+              for await (const msg of this._fetchSnippetBatch(siClient, uids, parts)) {
                 try {
                   const parsed = await parseMessage(msg);
                   if (parsed.snippet) {
