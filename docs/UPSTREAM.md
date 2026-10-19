@@ -21,11 +21,7 @@ Routine: `git fetch --no-tags upstream`, `git merge upstream/main` (never a reba
 
 ## Fork releases
 
-Version is `<merged upstream version>-fork.<n>`. After main is tested and pushed, `scripts/fork-release.sh` (workspace task "Fork: release latest") tags the next number, pushes the tag and publishes both images with `latest`; the hub's stack follows `latest` on its auto-update. No package.json bump (the image gets APP_VERSION from the tag), so upstream's own version bumps merge without conflict. Rollback on the hub: pin the previous fork tag.
+Version is upstream's version plus one number: 4.0.1.3 is our third build on upstream 4.0.1. After main is tested and pushed, `scripts/fork-release.sh` (workspace task "Fork: release latest") tags the next number, pushes the tag and publishes both images as that version and as `latest`; the hub's stack follows `latest` on its auto-update. No package.json bump (the image gets APP_VERSION from the tag), so upstream's own version bumps merge without conflict. Rollback on the hub: pin the previous version tag.
 
-- v4.0.1-fork.1 (2026-10-18): upstream f042cd2 plus the two hydroxide fixes above.
-
-## merge upstream c1c4469, 2026-10-19
-
-- One upstream commit, fix(reading) #639, frontend only (MessageBodyView.jsx and its render test). Clean merge, no CLAUDE.md or workflow change, no migrations, our two fixes untouched. Both suites and lints run after the merge. Not released as an image yet.
-- v4.0.1-fork.2 (2026-10-19): fork.1 plus upstream c1c4469 (reading-pane fix #639). First release through scripts/fork-release.sh.
+- v4.0.1-fork.1 (2026-10-18): upstream f042cd2 plus the two hydroxide fixes above. Old naming.
+- v4.0.1-fork.2 (2026-10-19): fork.1 plus upstream c1c4469 (reading-pane fix #639). Old naming; the next release is 4.0.1.3.

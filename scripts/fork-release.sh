@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-step fork release: tags the next v<upstream version>-fork.<n> on the pushed main, pushes the tag,
+# One-step fork release: tags the next v<upstream version>.<n> on the pushed main, pushes the tag,
 # builds both images here and pushes them to GHCR with the latest tag. The hub's stack follows
 # ghcr.io/fundryi/mailflow-*:latest, so it picks the release up on its next auto-update.
 # Usage: scripts/fork-release.sh [platforms]
@@ -14,8 +14,8 @@ git fetch -q origin
 [[ $(git rev-parse HEAD) == $(git rev-parse origin/main) ]] || { echo "main is not pushed (or behind origin); push first" >&2; exit 1; }
 
 base=$(node -p "require('./backend/package.json').version")   # upstream's version as merged
-last=$(git tag --list "v$base-fork.*" | sed "s/^v$base-fork\.//" | sort -n | tail -1)
-version="$base-fork.$(( ${last:-0} + 1 ))"
+last=$(git tag --list "v$base.*" | sed "s/^v$base\.//" | grep -E '^[0-9]+$' | sort -n | tail -1 || true)
+version="$base.$(( ${last:-0} + 1 ))"
 
 echo "Releasing v$version from $(git rev-parse --short HEAD)"
 git tag "v$version"
