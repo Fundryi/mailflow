@@ -8,6 +8,8 @@ cd "$(dirname "$0")/.."
 
 [[ $(git rev-parse --abbrev-ref HEAD) == main ]] || { echo "release from main only" >&2; exit 1; }
 [[ -z $(git status --porcelain) ]] || { echo "commit or stash first; the tree is not clean" >&2; exit 1; }
+# Checked before the tag exists: a tag with no images behind it is worse than no release.
+docker version >/dev/null 2>&1 || { echo "Docker Desktop is not running; start it and rerun" >&2; exit 1; }
 git fetch -q origin
 [[ $(git rev-parse HEAD) == $(git rev-parse origin/main) ]] || { echo "main is not pushed (or behind origin); push first" >&2; exit 1; }
 
