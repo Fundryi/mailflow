@@ -21,7 +21,7 @@ Routine: `git fetch --no-tags upstream`, `git merge upstream/main` (never a reba
 
 ## Fork releases
 
-Version is `<merged upstream version>-fork.<n>`: `git tag v4.0.1-fork.1 && git push origin v4.0.1-fork.1`, then `scripts/publish-local.sh 4.0.1-fork.1`. No package.json bump (the image gets APP_VERSION from the tag), so upstream's own version bumps merge without conflict.
+Version is `<merged upstream version>-fork.<n>`. After main is tested and pushed, `scripts/fork-release.sh` (workspace task "Fork: release latest") tags the next number, pushes the tag and publishes both images with `latest`; the hub's stack follows `latest` on its auto-update. No package.json bump (the image gets APP_VERSION from the tag), so upstream's own version bumps merge without conflict. Rollback on the hub: pin the previous fork tag.
 
 - v4.0.1-fork.1 (2026-10-18): upstream f042cd2 plus the two hydroxide fixes above.
 
