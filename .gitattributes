@@ -1,4 +1,0 @@
-# Our CLAUDE.md is a stub that points at AGENTS.md; upstream edits to it are ported by hand (AGENTS.md: Instruction files).
-CLAUDE.md merge=ours
-# Both sides append to the end of .gitignore; order does not matter there, so take both.
-.gitignore merge=union

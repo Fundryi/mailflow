@@ -32,7 +32,3 @@ Thumbs.db
 
 .superpowers/
 output/
-
-# fork (Fundryi): private notes and the local workspace file stay out of git
-CLAUDE.local.md
-*.code-workspace
