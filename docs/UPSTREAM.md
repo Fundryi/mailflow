@@ -24,3 +24,7 @@ Routine: `git fetch --no-tags upstream`, `git merge upstream/main` (never a reba
 Version is `<merged upstream version>-fork.<n>`: `git tag v4.0.1-fork.1 && git push origin v4.0.1-fork.1`, then `scripts/publish-local.sh 4.0.1-fork.1`. No package.json bump (the image gets APP_VERSION from the tag), so upstream's own version bumps merge without conflict.
 
 - v4.0.1-fork.1 (2026-10-18): upstream f042cd2 plus the two hydroxide fixes above.
+
+## merge upstream c1c4469, 2026-10-19
+
+- One upstream commit, fix(reading) #639, frontend only (MessageBodyView.jsx and its render test). Clean merge, no CLAUDE.md or workflow change, no migrations, our two fixes untouched. Both suites and lints run after the merge. Not released as an image yet.
