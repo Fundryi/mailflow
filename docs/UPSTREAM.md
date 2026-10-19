@@ -28,3 +28,4 @@ Version is `<merged upstream version>-fork.<n>`. After main is tested and pushed
 ## merge upstream c1c4469, 2026-10-19
 
 - One upstream commit, fix(reading) #639, frontend only (MessageBodyView.jsx and its render test). Clean merge, no CLAUDE.md or workflow change, no migrations, our two fixes untouched. Both suites and lints run after the merge. Not released as an image yet.
+- v4.0.1-fork.2 (2026-10-19): fork.1 plus upstream c1c4469 (reading-pane fix #639). First release through scripts/fork-release.sh.
